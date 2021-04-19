@@ -247,20 +247,16 @@ def main(output_directory, marking_network, images, original_indexes, carriers, 
     return images_for_tensorboard
 
 
-def get_images_for_marking_cifar10(training_set, tensorboard_log_directory, class_marking_percentage):
+def get_images_for_marking_cifar10(training_set, tensorboard_log_directory, marking_percentage, class_id):
 
     # Index images by class
     images_by_class = [[] for x in training_set.classes]
     for index, (img, label) in enumerate(training_set):
         images_by_class[label].append(index)
 
-    # Randomly choose an image class
-    chosen_image_class = random.choice(list(range(0, len(training_set.classes))))
-    logger.info(f"Randomly selected image class {chosen_image_class} ({training_set.classes[chosen_image_class]})")
-
-    # Randomly sample images from that class
-    total_marked_in_class = int(len(images_by_class[chosen_image_class]) * (class_marking_percentage / 100))
-    train_marked_indexes = random.sample(images_by_class[chosen_image_class], total_marked_in_class)
+    # Sample images from that class
+    total_marked_in_class = int(len(images_by_class[class_id]) * (marking_percentage / 100))
+    train_marked_indexes = random.sample(images_by_class[class_id], total_marked_in_class)
 
     # Save to tensorboard - never use pyplot for grids, so slow....
     tensorboard_summary_writer = SummaryWriter(log_dir=tensorboard_log_directory)
@@ -277,22 +273,30 @@ def get_images_for_marking_cifar10(training_set, tensorboard_log_directory, clas
         image , _ = training_set[index]
         images_for_marking.append(transform(image).unsqueeze(0))
 
-    return chosen_image_class, images_for_marking, train_marked_indexes
+    return images_for_marking, train_marked_indexes
 
-def get_images_for_marking_multiclass_cifar10(training_set, tensorboard_log_directory, overall_marking_percentage):
 
-    # Randomly sample images
-    total_marked_images = int(len(training_set) * (overall_marking_percentage / 100))
-    train_marked_indexes = random.sample(range(0, len(training_set)), total_marked_images)
+def get_images_for_marking_multiclass_cifar10(training_set, tensorboard_log_directory, marking_percentage):
+
+    # Index images by class
+    images_by_class = [[] for x in training_set.classes]
+    for index, (img, label) in enumerate(training_set):
+        images_by_class[label].append(index)
 
     # Sort images into classes, rewriting the marking code for multi-class is messy
     # Transform and add to dictionary of lists, dictionary index is class id
     # { 0 : [(image1, original_index1),(image2, original_index2)...], 1 : [....] }
     transform = transforms.Compose([transforms.ToTensor(), NORMALIZE_CIFAR10])
-    image_data = {class_id:[] for class_id in range(0, len(training_set.classes))}    
-    for index in train_marked_indexes:
-        image, label = training_set[index]
-        image_data[label].append((transform(image).unsqueeze(0), index))
+    image_data = {class_id:[] for class_id in range(0, len(training_set.classes))}
+
+    marked_indexes = []
+    for class_id in range(0, len(training_set.classes)):
+        total_marked_in_class = int(len(images_by_class[class_id]) * (marking_percentage / 100))
+        class_marked_indexes = random.sample(images_by_class[class_id], total_marked_in_class)
+        marked_indexes += class_marked_indexes
+        for index in class_marked_indexes:
+            image, _ = training_set[index]
+            image_data[class_id].append((transform(image).unsqueeze(0), index))
 
     # Save to tensorboard - sorted by class, original_index
     tensorboard_summary_writer = SummaryWriter(log_dir=tensorboard_log_directory)
@@ -306,7 +310,8 @@ def get_images_for_marking_multiclass_cifar10(training_set, tensorboard_log_dire
     img_grid = torchvision.utils.make_grid(images, nrow=16)
     tensorboard_summary_writer.add_image('images_for_marking', img_grid)
 
-    return image_data
+    return image_data, marked_indexes
+
 
 if __name__ == '__main__':
 
@@ -322,18 +327,15 @@ if __name__ == '__main__':
     our_tensorboard_logs = glob.glob('runs/radioactive*') # main creates extra log dirs
     for tensorboard_log in our_tensorboard_logs:
         shutil.rmtree(tensorboard_log)
-    tensorboard_log_directory="runs/radioactive"
-
-    # Load randomly sampled images from random class along with list of original indexes 
-    training_set = torchvision.datasets.CIFAR10(root="experiments/datasets", download=True)
-    class_marking_percentage = 10
-    class_id, images, original_indexes = get_images_for_marking_cifar10(training_set, tensorboard_log_directory, 
-                                                                        class_marking_percentage)
-
+    tensorboard_log_directory_base="runs/radioactive"
+                                                     
     # Marking network is a pretrained resnet18
     marking_network = resnet18()
     ckpt = torch.load('resnet18.pth.tar')
     marking_network.load_state_dict({k.replace("module.", ""): v for k, v in ckpt.items()}, strict=False)
+
+    training_set = torchvision.datasets.CIFAR10(root="experiments/datasets", download=True)
+    marking_percentage = 10
 
     # Carriers
     marking_network_fc_feature_size = 512
@@ -347,13 +349,21 @@ if __name__ == '__main__':
     epochs = 100
     batch_size = 32
     output_directory = os.path.join(experiment_directory, "marked_images")
-    marked_images = main(output_directory, marking_network, images, original_indexes, carriers, 
-                         class_id, NORMALIZE_CIFAR10, optimizer, tensorboard_log_directory, epochs=epochs, 
-                         batch_size=batch_size, overwrite=True)
 
-    # Show marked images in Tensorboard
-    tensorboard_summary_writer = SummaryWriter(log_dir=tensorboard_log_directory)
-    images_for_tensorboard = [transforms.ToTensor()(x) for x in marked_images]
-    img_grid = torchvision.utils.make_grid(images_for_tensorboard, nrow=16)
-    tensorboard_summary_writer.add_image('marked_images', img_grid)
+    # image_data, original_indexes = get_images_for_marking_multiclass_cifar10(training_set, tensorboard_log_directory, 
+                                                                            # marking_percentage)   
+    for class_id in range(len(training_set.classes)):
+        tensorboard_log_directory = os.path.join(tensorboard_log_directory_base, str(class_id))
+        images, original_indexes = get_images_for_marking_cifar10(training_set, tensorboard_log_directory, 
+                                                                            marking_percentage, class_id)
+
+        marked_images = main(output_directory, marking_network, images, original_indexes, carriers, 
+                            class_id, NORMALIZE_CIFAR10, optimizer, tensorboard_log_directory, epochs=epochs, 
+                            batch_size=batch_size, overwrite=True)
+
+        # Show marked images in Tensorboard
+        tensorboard_summary_writer = SummaryWriter(log_dir=tensorboard_log_directory)
+        images_for_tensorboard = [transforms.ToTensor()(x) for x in marked_images]
+        img_grid = torchvision.utils.make_grid(images_for_tensorboard, nrow=16)
+        tensorboard_summary_writer.add_image('marked_images', img_grid)
 
