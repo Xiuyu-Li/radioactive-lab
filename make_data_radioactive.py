@@ -20,6 +20,7 @@ from tqdm.autonotebook import tqdm
 
 from utils.utils import NORMALIZE_CIFAR10
 import radioactive.differentiable_augmentations as differentiable_augmentations
+from models.resnet import resnet18
 
 import logging
 from utils.logger import setup_logger_tqdm
@@ -330,7 +331,9 @@ if __name__ == '__main__':
                                                                         class_marking_percentage)
 
     # Marking network is a pretrained resnet18
-    marking_network = torchvision.models.resnet18(pretrained=True)
+    marking_network = resnet18()
+    ckpt = torch.load('resnet18.pth.tar')
+    marking_network.load_state_dict({k.replace("module.", ""): v for k, v in ckpt.items()}, strict=False)
 
     # Carriers
     marking_network_fc_feature_size = 512
@@ -340,7 +343,7 @@ if __name__ == '__main__':
 
     # Run!
     #optimizer = lambda x : torch.optim.SGD(x, lr=1) # Doesn't produce good loss
-    optimizer = lambda x : torch.optim.AdamW(x, lr=0.1)
+    optimizer = lambda x : torch.optim.Adam(x, lr=0.001)
     epochs = 100
     batch_size = 32
     output_directory = os.path.join(experiment_directory, "marked_images")
