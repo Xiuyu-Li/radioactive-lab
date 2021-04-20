@@ -5,14 +5,16 @@ import shutil
 import torch
 import torchvision
 import torchvision.transforms.transforms as transforms
-from torch.nn import functional as F
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from tqdm.autonotebook import tqdm
 
-from radioactive.dataset_wrappers import MergedDataset
-from utils.utils import NORMALIZE_CIFAR10, NORMALIZE_IMAGENET, NORMALIZE_IMAGENETTE
-from utils.utils import Timer
+from dataset_wrappers import MergedDataset
+from utils.utils import NORMALIZE_CIFAR10, Timer
+from models.resnet import resnet18
 
 import logging
 from utils.logger import setup_logger_tqdm
@@ -22,7 +24,8 @@ logger = logging.getLogger(__name__)
 def numpy_loader(x):
     return transforms.ToPILImage()(np.load(x))
 
-def get_data_loaders_cifar10(marked_images_directory, augment, batch_size=512, num_workers=1):
+
+def get_data_loaders_cifar10(marked_images_directory, augment, batch_size=256, num_workers=4):
 
     cifar10_dataset_root = "experiments/datasets" # Will download here
 
@@ -70,61 +73,6 @@ def get_data_loaders_cifar10(marked_images_directory, augment, batch_size=512, n
 
     return train_set_loader, test_set_loader
 
-def data_loaders_imagenet_imagenette(train_images_path, test_images_path, marked_images_directory, normalizer, batch_size=16, num_workers=1):
-
-    # Base Training Set
-    base_train_set = torchvision.datasets.ImageFolder(train_images_path)
-
-    # Load marked data from Numpy img format - no transforms
-    extensions = ("npy")
-    marked_images = torchvision.datasets.DatasetFolder(marked_images_directory, numpy_loader, extensions=extensions)
-
-    # Setup Merged Training Set: Vanilla -> Merged <- Marked
-    # MergedDataset allows you to replace certain examples with marked alternatives
-    merge_to_vanilla = [None] * len(marked_images)
-    for i, (path, target) in enumerate(marked_images.samples):
-        img_id = re.search('[0-9]+', os.path.basename(path))
-        merge_to_vanilla[i] = int(img_id[0])
-
-    merged_train_set = MergedDataset(base_train_set, marked_images, merge_to_vanilla)
-
-    # Add Transform and Get Training set dataloader
-    train_transform = transforms.Compose([transforms.RandomCrop(256, pad_if_needed=True),
-                                          transforms.ColorJitter(),
-                                          transforms.RandomHorizontalFlip(),
-                                          transforms.ToTensor(),
-                                          normalizer])    
-
-    merged_train_set.transform = train_transform
-
-    train_set_loader = torch.utils.data.DataLoader(merged_train_set,
-                                                   batch_size=batch_size,
-                                                   num_workers=num_workers,
-                                                   shuffle=True,
-                                                   pin_memory=True)
-
-    # Test
-    test_transform = transforms.Compose([transforms.CenterCrop(256),
-                                         transforms.ToTensor(),
-                                         normalizer])
-    test_set = torchvision.datasets.ImageFolder(test_images_path, transform=test_transform)
-    test_set_loader = torch.utils.data.DataLoader(test_set, 
-                                                  batch_size=batch_size, 
-                                                  num_workers=num_workers, 
-                                                  shuffle=False,
-                                                  pin_memory=True)
-
-    return train_set_loader, test_set_loader
-
-def get_data_loaders_imagenette(train_images_path, test_images_path, marked_images_directory, batch_size=16, num_workers=1):
-    normalizer = NORMALIZE_IMAGENETTE
-    return data_loaders_imagenet_imagenette(train_images_path, test_images_path, marked_images_directory, 
-                                            normalizer, batch_size=batch_size, num_workers=num_workers)
-
-def get_data_loaders_imagenet(train_images_path, test_images_path, marked_images_directory, batch_size=16, num_workers=1):
-    normalizer = NORMALIZE_IMAGENET
-    return data_loaders_imagenet_imagenette(train_images_path, test_images_path, marked_images_directory, 
-                                            normalizer, batch_size=batch_size, num_workers=num_workers)
 
 def train_model(device, model, train_set_loader, optimizer):
     model.train() # For special layers
@@ -150,6 +98,7 @@ def train_model(device, model, train_set_loader, optimizer):
     accuracy = 100. * correct.item() / total
 
     return average_train_loss, accuracy
+
 
 def test_model(device, model, test_set_loader, optimizer):
     model.eval() # For special layers
@@ -200,7 +149,7 @@ def main(dataloader_func, model, optimizer_callback, output_directory, tensorboa
     logger.info(f"Epoch Count: {epochs}")
 
     # Load Checkpoint
-    checkpoint_file_path = os.path.join(output_directory, "checkpoint.pth")
+    checkpoint_file_path = os.path.join(output_directory, "checkpoint.pth.tar")
     start_epoch = 0
     if os.path.exists(checkpoint_file_path):
         logger.info("Checkpoint Found - Loading!")
@@ -269,10 +218,12 @@ if __name__ == '__main__':
     marked_images_directory = "experiments/radioactive/marked_images"
     output_directory="experiments/radioactive/train_marked_classifier"
     tensorboard_log_directory="runs/train_marked_classifier"
-    optimizer = lambda model : torch.optim.AdamW(model.parameters())
-    epochs = 60
-    dataloader_func = partial(get_data_loaders_cifar10, marked_images_directory, False)
-    model = torchvision.models.resnet18(pretrained=False, num_classes=10)
+    # optimizer = lambda model : optim.SGD(model.parameters(), lr=1e-3, weight_decay=5e-4)
+    optimizer = lambda model : optim.Adam(model.parameters(), lr=1e-3)
+    epochs = 300
+    dataloader_func = partial(get_data_loaders_cifar10, marked_images_directory, True)
+    model = resnet18()
+    model = nn.DataParallel(model)
 
     main(dataloader_func, model, optimizer, output_directory, tensorboard_log_directory,
          epochs=epochs)
