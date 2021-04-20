@@ -19,7 +19,7 @@ import numpy as np
 from tqdm.autonotebook import tqdm
 
 from utils.utils import NORMALIZE_CIFAR10
-import radioactive.differentiable_augmentations as differentiable_augmentations
+import differentiable_augmentations
 from models.resnet import resnet18
 
 import logging
@@ -71,14 +71,10 @@ def main(output_directory, marking_network, images, original_indexes, carriers, 
          optimizer_fn, tensorboard_log_directory_base, batch_size=32, epochs=90, lambda_1=0.0005, lambda_2=0.01, 
          angle=None, half_cone=True, radius=10, overwrite=False, augmentation=None):
 
-    if os.path.isdir(output_directory) and overwrite:
-        shutil.rmtree(output_directory)
-        #else:                
-        #    raise FileExistsError(f"Image output directory {output_directory} already exists." \
-        #       "Set overwrite=True if this is what you desire.")
-
     # Save the images in their respective class - We use torchvision.datasets.datasetfolder in training classifier
     output_directory = os.path.join(output_directory, str(class_id))
+    if os.path.isdir(output_directory) and overwrite:
+        shutil.rmtree(output_directory)
     os.makedirs(output_directory, exist_ok=True)
 
     # Reshape the mean and std for later use
@@ -133,15 +129,8 @@ def main(output_directory, marking_network, images, original_indexes, carriers, 
 
         # Get original features
         logger.info("Getting original features")        
-        if augmentation:
-            # Center crop required here - for imagenette
-            center_da = differentiable_augmentations.CenterCrop(256, 224)
-            img_center = torch.cat([center_da(x, 0).cuda(non_blocking=True) for x in img_orig_slice], dim=0)
-            ft_orig = marking_network(img_center).detach()
-        else:
-            # CIFAR10
-            img_orig_slice_tensor = torch.cat(img_orig_slice, dim=0).to(device)        
-            ft_orig = marking_network(img_orig_slice_tensor).detach() # Remove from graph
+        img_orig_slice_tensor = torch.cat(img_orig_slice, dim=0).to(device)        
+        ft_orig = marking_network(img_orig_slice_tensor).detach() # Remove from graph
 
         #if params.angle is not None:
         #    ft_orig = torch.load("/checkpoint/asablayrolles/radioactive_data/imagenet_ckpt_2/features/valid_resnet18_center.pth").cuda()
@@ -214,10 +203,7 @@ def main(output_directory, marking_network, images, original_indexes, carriers, 
         img_new = [numpy_pixel(x.data[0], mean, std).astype(np.float32) for x in img_slice]
         img_old = [numpy_pixel(x[0], mean, std).astype(np.float32) for x in img_orig_slice]
 
-        if augmentation:
-            img_totest = torch.cat([center_da(x, 0).cuda(non_blocking=True) for x in img_slice], dim=0).to(device)
-        else:
-            img_totest = torch.cat(img_slice).to(device)
+        img_totest = torch.cat(img_slice).to(device)
 
         with torch.no_grad():
             ft_new = marking_network(img_totest)
@@ -349,6 +335,7 @@ if __name__ == '__main__':
     epochs = 100
     batch_size = 32
     output_directory = os.path.join(experiment_directory, "marked_images")
+    augmentation = differentiable_augmentations.RandomResizedCropFlip(32)
 
     # image_data, original_indexes = get_images_for_marking_multiclass_cifar10(training_set, tensorboard_log_directory, 
                                                                             # marking_percentage)   
@@ -359,7 +346,7 @@ if __name__ == '__main__':
 
         marked_images = main(output_directory, marking_network, images, original_indexes, carriers, 
                             class_id, NORMALIZE_CIFAR10, optimizer, tensorboard_log_directory, epochs=epochs, 
-                            batch_size=batch_size, overwrite=True)
+                            batch_size=batch_size, overwrite=True, augmentation=augmentation)
 
         # Show marked images in Tensorboard
         tensorboard_summary_writer = SummaryWriter(log_dir=tensorboard_log_directory)
