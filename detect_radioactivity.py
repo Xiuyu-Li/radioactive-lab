@@ -15,7 +15,8 @@ from scipy.stats import combine_pvalues
 from scipy.special import betainc
 import numpy as np
 
-from utils.utils import NORMALIZE_CIFAR10, Timer
+from utils.utils import NORMALIZE_CIFAR10, Timer, normalize_module_name
+from models.resnet import resnet18
 
 import logging
 from utils.logger import setup_logger_tqdm
@@ -181,13 +182,18 @@ if __name__ == '__main__':
     carrier_path = os.path.join(experiment_directory, "carriers.pth")
 
     # Recreate marking network and remove fully connected layer
-    marking_network = torchvision.models.resnet18(pretrained=True)
+    marking_checkpoint = torch.load('resnet18.pth.tar')
+    marking_checkpoint = {normalize_module_name(k): v for k, v in marking_checkpoint.items()}
+    marking_network = resnet18()
+    marking_network.load_state_dict(marking_checkpoint)
     marking_network.fc = nn.Sequential()
 
     # Load Target Network and remove fully connected layer
-    target_network_path = "experiments/radioactive/train_marked_classifier/checkpoint.pth"
+    target_network_path = "experiments/radioactive/train_marked_classifier/checkpoint.pth.tar"
     target_checkpoint = torch.load(target_network_path)
-    target_network = torchvision.models.resnet18(pretrained=False, num_classes=10)
+    target_checkpoint["model_state_dict"] = {normalize_module_name(k): v for k, v in 
+                                target_checkpoint["model_state_dict"].items()}
+    target_network = resnet18()
     target_network.load_state_dict(target_checkpoint["model_state_dict"])
     target_network.fc = nn.Sequential()
 
