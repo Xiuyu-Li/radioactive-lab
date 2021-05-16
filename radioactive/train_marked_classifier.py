@@ -22,12 +22,15 @@ logger = logging.getLogger(__name__)
 def numpy_loader(x):
     return transforms.ToPILImage()(np.load(x))
 
-def get_data_loaders_cifar10(marked_images_directory, augment, batch_size=512, num_workers=1):
+def get_data_loaders_cifar(marked_images_directory, augment, batch_size=512, num_workers=1, dataset='cifar100'):
 
-    cifar10_dataset_root = "experiments/datasets" # Will download here
+    cifar_dataset_root = "experiments/datasets" # Will download here
 
     # Base Training Set
-    base_train_set = torchvision.datasets.CIFAR10(cifar10_dataset_root, download=True)
+    if dataset == 'cifar10':
+        base_train_set = torchvision.datasets.CIFAR10(cifar_dataset_root, download=True)
+    elif dataset == 'cifar100':
+        base_train_set = torchvision.datasets.CIFAR100(cifar_dataset_root, download=True)
 
     # Load marked data from Numpy img format - no transforms
     extensions = ("npy")
@@ -61,7 +64,10 @@ def get_data_loaders_cifar10(marked_images_directory, augment, batch_size=512, n
 
     # Test Set (Simple)
     test_transform = transforms.Compose([transforms.ToTensor(), NORMALIZE_CIFAR10])
-    test_set = torchvision.datasets.CIFAR10(cifar10_dataset_root, train=False, transform=test_transform)
+    if dataset == 'cifar10':
+        test_set = torchvision.datasets.CIFAR10(cifar_dataset_root, train=False, transform=test_transform)
+    elif dataset == 'cifar100':
+        test_set = torchvision.datasets.CIFAR100(cifar_dataset_root, train=False, transform=test_transform)
     test_set_loader = torch.utils.data.DataLoader(test_set, 
                                                   batch_size=batch_size, 
                                                   num_workers=num_workers, 
@@ -70,61 +76,6 @@ def get_data_loaders_cifar10(marked_images_directory, augment, batch_size=512, n
 
     return train_set_loader, test_set_loader
 
-def data_loaders_imagenet_imagenette(train_images_path, test_images_path, marked_images_directory, normalizer, batch_size=16, num_workers=1):
-
-    # Base Training Set
-    base_train_set = torchvision.datasets.ImageFolder(train_images_path)
-
-    # Load marked data from Numpy img format - no transforms
-    extensions = ("npy")
-    marked_images = torchvision.datasets.DatasetFolder(marked_images_directory, numpy_loader, extensions=extensions)
-
-    # Setup Merged Training Set: Vanilla -> Merged <- Marked
-    # MergedDataset allows you to replace certain examples with marked alternatives
-    merge_to_vanilla = [None] * len(marked_images)
-    for i, (path, target) in enumerate(marked_images.samples):
-        img_id = re.search('[0-9]+', os.path.basename(path))
-        merge_to_vanilla[i] = int(img_id[0])
-
-    merged_train_set = MergedDataset(base_train_set, marked_images, merge_to_vanilla)
-
-    # Add Transform and Get Training set dataloader
-    train_transform = transforms.Compose([transforms.RandomCrop(256, pad_if_needed=True),
-                                          transforms.ColorJitter(),
-                                          transforms.RandomHorizontalFlip(),
-                                          transforms.ToTensor(),
-                                          normalizer])    
-
-    merged_train_set.transform = train_transform
-
-    train_set_loader = torch.utils.data.DataLoader(merged_train_set,
-                                                   batch_size=batch_size,
-                                                   num_workers=num_workers,
-                                                   shuffle=True,
-                                                   pin_memory=True)
-
-    # Test
-    test_transform = transforms.Compose([transforms.CenterCrop(256),
-                                         transforms.ToTensor(),
-                                         normalizer])
-    test_set = torchvision.datasets.ImageFolder(test_images_path, transform=test_transform)
-    test_set_loader = torch.utils.data.DataLoader(test_set, 
-                                                  batch_size=batch_size, 
-                                                  num_workers=num_workers, 
-                                                  shuffle=False,
-                                                  pin_memory=True)
-
-    return train_set_loader, test_set_loader
-
-def get_data_loaders_imagenette(train_images_path, test_images_path, marked_images_directory, batch_size=16, num_workers=1):
-    normalizer = NORMALIZE_IMAGENETTE
-    return data_loaders_imagenet_imagenette(train_images_path, test_images_path, marked_images_directory, 
-                                            normalizer, batch_size=batch_size, num_workers=num_workers)
-
-def get_data_loaders_imagenet(train_images_path, test_images_path, marked_images_directory, batch_size=16, num_workers=1):
-    normalizer = NORMALIZE_IMAGENET
-    return data_loaders_imagenet_imagenette(train_images_path, test_images_path, marked_images_directory, 
-                                            normalizer, batch_size=batch_size, num_workers=num_workers)
 
 def train_model(device, model, train_set_loader, optimizer):
     model.train() # For special layers
@@ -222,6 +173,7 @@ def main(dataloader_func, model, optimizer_callback, output_directory, tensorboa
 
     # Training Loop
     t = Timer()
+    best_test = 0
     for epoch in range(start_epoch, epochs):
         t.start()
         logger.info(f"Commence EPOCH {epoch}")
@@ -241,22 +193,25 @@ def main(dataloader_func, model, optimizer_callback, output_directory, tensorboa
             scheduler_dict = lr_scheduler.state_dict()
 
         # Save Checkpoint
-        logger.info("Saving checkpoint.")
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'lr_scheduler_state_dict': scheduler_dict,
-            'train_loss': train_loss,
-            'train_accuracy': train_accuracy,
-            'test_accuracy': test_accuracy
-            }, checkpoint_file_path)
+        if test_accuracy > best_test:
+            best_test = test_accuracy
+            logger.info("Saving checkpoint.")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'lr_scheduler_state_dict': scheduler_dict,
+                'train_loss': train_loss,
+                'train_accuracy': train_accuracy,
+                'test_accuracy': test_accuracy
+                }, checkpoint_file_path)
 
         elapsed_time = t.stop()
         logger.info(f"End of epoch {epoch}, took {elapsed_time:0.4f} seconds.")
         logger.info(f"Average Train Loss: {train_loss}")
         logger.info(f"Top-1 Train Accuracy: {train_accuracy}")
         logger.info(f"Top-1 Test Accuracy: {test_accuracy}")
+    logger.info(f"Top-1 Best Test Accuracy: {best_test}")
 
 from functools import partial
 
@@ -271,7 +226,7 @@ if __name__ == '__main__':
     tensorboard_log_directory="runs/train_marked_classifier"
     optimizer = lambda model : torch.optim.AdamW(model.parameters())
     epochs = 60
-    dataloader_func = partial(get_data_loaders_cifar10, marked_images_directory, False)
+    dataloader_func = partial(get_data_loaders_cifar, marked_images_directory, False)
     model = torchvision.models.resnet18(pretrained=False, num_classes=10)
 
     main(dataloader_func, model, optimizer, output_directory, tensorboard_log_directory,
