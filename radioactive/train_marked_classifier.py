@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def numpy_loader(x):
     return transforms.ToPILImage()(np.load(x))
 
-def get_data_loaders_cifar(marked_images_directory, augment, batch_size=512, num_workers=1, dataset='cifar100'):
+def get_data_loaders_cifar(marked_images_directory, augment, batch_size=512, num_workers=1, dataset='cifar10'):
 
     cifar_dataset_root = "experiments/datasets" # Will download here
 

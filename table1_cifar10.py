@@ -13,6 +13,7 @@ import cutie
 import matplotlib.pyplot as plt
 
 import resnet18.resnet18_cifar10 as resnet18cifar10
+from models.resnet import resnet18
 from radioactive.make_data_radioactive import get_images_for_marking_cifar10, get_images_for_marking_multiclass_cifar10
 from radioactive.make_data_radioactive import main as do_marking
 from radioactive.train_marked_classifier import main as train_marked_classifier
@@ -55,10 +56,12 @@ def do_marking_run(class_marking_percentage, experiment_directory, tensorboard_l
         tensorboard_log_directory=tensorboard_log_directory)
 
     # Marking network is the resnet18 we trained on CIFAR10
-    marking_network = torchvision.models.resnet18(pretrained=False, num_classes=10)    
-    checkpoint_path = "experiments/table1/step1/checkpoint.pth"
+    # marking_network = torchvision.models.resnet18(pretrained=False, num_classes=10)
+    marking_network = resnet18()   
+    checkpoint_path = "experiments/cifar10/table1/step1/checkpoint.pth"
     marking_network_checkpoint = torch.load(checkpoint_path)
-    marking_network.load_state_dict(marking_network_checkpoint["model_state_dict"])
+    marking_network.load_state_dict({k.replace("module.", ""): v for k, v in 
+        marking_network_checkpoint["model_state_dict"].items()})
 
     # Carriers
     marking_network_fc_feature_size = 512
@@ -103,10 +106,12 @@ def do_marking_run_multiclass(overall_marking_percentage, experiment_directory, 
     training_set = torchvision.datasets.CIFAR10(root="experiments/datasets", download=True)
 
     # Marking network is the resnet18 we trained on CIFAR10
-    marking_network = torchvision.models.resnet18(pretrained=False, num_classes=10)    
-    checkpoint_path = "experiments/table1/step1/checkpoint.pth"
+    # marking_network = torchvision.models.resnet18(pretrained=False, num_classes=10)
+    marking_network = resnet18()
+    checkpoint_path = "experiments/cifar10/table1/step1/checkpoint.pth"
     marking_network_checkpoint = torch.load(checkpoint_path)
-    marking_network.load_state_dict(marking_network_checkpoint["model_state_dict"])
+    marking_network.load_state_dict({k.replace("module.", ""): v for k, v in 
+        marking_network_checkpoint["model_state_dict"].items()})
 
     # Carriers
     marking_network_fc_feature_size = 512
@@ -150,10 +155,12 @@ def do_marking_run_multiclass(overall_marking_percentage, experiment_directory, 
 
 def do_training_run(run_name, augment):
     # Load our trained resnet18 from step1
-    model = torchvision.models.resnet18(pretrained=False, num_classes=10)
-    checkpoint_path = "experiments/table1/step1/checkpoint.pth"
+    # model = torchvision.models.resnet18(pretrained=False, num_classes=10)
+    model = resnet18()
+    checkpoint_path = "experiments/cifar10/table1/step1/checkpoint.pth"
     checkpoint = torch.load(checkpoint_path)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model.load_state_dict({k.replace("module.", ""): v for k, v in 
+        checkpoint["model_state_dict"].items()})
 
     # Retrain the fully connected layer only
     for param in model.parameters():
@@ -163,27 +170,29 @@ def do_training_run(run_name, augment):
     optimizer = lambda model : torch.optim.AdamW(model.fc.parameters())
 
     tensorboard_log_directory = f"runs/table1_{run_name}_target"
-    epochs = 20
-    output_directory = f"experiments/table1/{run_name}/marked_classifier"
-    marked_images_directory = f"experiments/table1/{run_name}/marked_images"
-    dataloader_func = partial(get_data_loaders_cifar, marked_images_directory, augment)
+    epochs = 40
+    output_directory = f"experiments/cifar10/table1/{run_name}/marked_classifier"
+    marked_images_directory = f"experiments/cifar10/table1/{run_name}/marked_images"
+    dataloader_func = partial(get_data_loaders_cifar, marked_images_directory, augment, dataset='cifar10')
     train_marked_classifier(dataloader_func, model, optimizer, output_directory, tensorboard_log_directory, 
                             epochs=epochs)
 
 def calculate_p_values(marking_percentages):
-    logfile_path = f"experiments/table1/detect_radioactivity.log"
+    logfile_path = f"experiments/cifar10/table1/detect_radioactivity.log"
     setup_logger_tqdm(logfile_path)
 
     p_values = []
 
     for run in marking_percentages:
         run_name = f"{run}_percent"
-        carrier_path = f"experiments/table1/{run_name}/carriers.pth"
+        carrier_path = f"experiments/cifar10/table1/{run_name}/carriers.pth"
 
-        target_network = torchvision.models.resnet18(pretrained=False, num_classes=10)
-        target_checkpoint_path = f"experiments/table1/{run_name}/marked_classifier/checkpoint.pth"
+        # target_network = torchvision.models.resnet18(pretrained=False, num_classes=10)
+        target_network = resnet18()
+        target_checkpoint_path = f"experiments/cifar10/table1/{run_name}/marked_classifier/checkpoint.pth"
         target_checkpoint = torch.load(target_checkpoint_path)
-        target_network.load_state_dict(target_checkpoint["model_state_dict"])
+        target_network.load_state_dict({k.replace("module.", ""): v for k, v in 
+            target_checkpoint["model_state_dict"].items()})
         target_network.fc = nn.Sequential()
 
         # No need to align when only retraining the logistic regression
@@ -196,14 +205,14 @@ def calculate_p_values(marking_percentages):
 
 def generate_table_1(marking_percentages, p_values):
     # Get Vanilla Accuracy
-    vanilla_checkpoint_path = "experiments/table1/step1/checkpoint.pth"
+    vanilla_checkpoint_path = "experiments/cifar10/table1/step1/checkpoint.pth"
     vanilla_checkpoint = torch.load(vanilla_checkpoint_path)
 
     # The Rest
     accuracies = [vanilla_checkpoint["test_accuracy"]]
     for run in marking_percentages:
         run_name = f"{run}_percent"
-        marked_checkpoint_path = f"experiments/table1/{run_name}/marked_classifier/checkpoint.pth"
+        marked_checkpoint_path = f"experiments/cifar10/table1/{run_name}/marked_classifier/checkpoint.pth"
         marked_checkpoint = torch.load(marked_checkpoint_path)
         accuracies.append(marked_checkpoint["test_accuracy"])
 
@@ -224,27 +233,27 @@ def generate_table_1(marking_percentages, p_values):
                      colColours=colors,
                      colLabels=column_labels,
                      loc='center')
-    plt.savefig("experiments/table1/table1.png")
+    plt.savefig("experiments/cifar10/table1/table1.png")
     plt.show()
 
 
 if __name__ == '__main__':
     marking_percentages = [1, 2, 5, 10, 20]
 
-    p_values_file = "experiments/table1/p_values.pth"
+    p_values_file = "experiments/cifar10/table1/p_values.pth"
 
     # Step 1 - Train Marking Network
     optimizer = lambda x : torch.optim.AdamW(x)
-    output_directory_root = "experiments/table1"
+    output_directory_root = "experiments/cifar10/table1"
     experiment_name = "step1"
     epochs = 60
-    resnet18cifar10.main(experiment_name, optimizer, 
-                         output_directory_root=output_directory_root,
-                         epochs=epochs)
+    # resnet18cifar10.main(experiment_name, optimizer, 
+    #                      output_directory_root=output_directory_root,
+    #                      epochs=epochs)
 
     # Step 2 - Marking
     for marking_percentage in marking_percentages:
-        experiment_directory = os.path.join("experiments", "table1", f"{marking_percentage}_percent")
+        experiment_directory = os.path.join("experiments/cifar10/table1", f"{marking_percentage}_percent")
         if os.path.exists(os.path.join(experiment_directory, "marking.complete")):
             message = f"Marking step already completed for {marking_percentage}%. Do you want to restart this part of " \
                       "the experiment?"
