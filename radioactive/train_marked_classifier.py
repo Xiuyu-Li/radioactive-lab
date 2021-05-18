@@ -193,8 +193,10 @@ def main(dataloader_func, model, optimizer_callback, output_directory, tensorboa
             scheduler_dict = lr_scheduler.state_dict()
 
         # Save Checkpoint
-        if test_accuracy > best_test:
+        is_best = test_accuracy > best_test
+        if is_best:
             best_test = test_accuracy
+        if is_best or epochs < 15:
             logger.info("Saving checkpoint.")
             torch.save({
                 'epoch': epoch,
