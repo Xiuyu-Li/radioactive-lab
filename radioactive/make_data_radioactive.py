@@ -132,15 +132,15 @@ def main(output_directory, marking_network, images, original_indexes, carriers, 
 
         # Get original features
         logger.info("Getting original features")        
-        if augmentation:
-            # Center crop required here - for imagenette
-            center_da = differentiable_augmentations.CenterCrop(256, 224)
-            img_center = torch.cat([center_da(x, 0).cuda(non_blocking=True) for x in img_orig_slice], dim=0)
-            ft_orig = marking_network(img_center).detach()
-        else:
-            # CIFAR10
-            img_orig_slice_tensor = torch.cat(img_orig_slice, dim=0).to(device)        
-            ft_orig = marking_network(img_orig_slice_tensor).detach() # Remove from graph
+        # if augmentation:
+        #     # Center crop required here - for imagenette
+        #     center_da = differentiable_augmentations.CenterCrop(256, 224)
+        #     img_center = torch.cat([center_da(x, 0).cuda(non_blocking=True) for x in img_orig_slice], dim=0)
+        #     ft_orig = marking_network(img_center).detach()
+
+        # CIFAR10
+        img_orig_slice_tensor = torch.cat(img_orig_slice, dim=0).to(device)        
+        ft_orig = marking_network(img_orig_slice_tensor).detach() # Remove from graph
 
         #if params.angle is not None:
         #    ft_orig = torch.load("/checkpoint/asablayrolles/radioactive_data/imagenet_ckpt_2/features/valid_resnet18_center.pth").cuda()
@@ -148,13 +148,15 @@ def main(output_directory, marking_network, images, original_indexes, carriers, 
         tensorboard_log_directory = os.path.join(f"{tensorboard_log_directory_base}", f"batch{batch_number}")
         tensorboard_summary_writer = SummaryWriter(log_dir=tensorboard_log_directory)
 
+        random_da = differentiable_augmentations.RandomResizedCropFlip(32)
+        
         for iteration in tqdm(range(epochs)):
             batch = []
             for x in img_slice:
                 if augmentation:
                     # Differentiable augment
-                    aug_params = augmentation.sample_params(x)
-                    aug_img = augmentation(x, aug_params)
+                    aug_params = random_da.sample_params(x)
+                    aug_img = random_da(x, aug_params)
                     batch.append(aug_img)
                 else:
                     batch.append(x)
@@ -213,10 +215,9 @@ def main(output_directory, marking_network, images, original_indexes, carriers, 
         img_new = [numpy_pixel(x.data[0], mean, std).astype(np.float32) for x in img_slice]
         img_old = [numpy_pixel(x[0], mean, std).astype(np.float32) for x in img_orig_slice]
 
-        if augmentation:
-            img_totest = torch.cat([center_da(x, 0).cuda(non_blocking=True) for x in img_slice], dim=0).to(device)
-        else:
-            img_totest = torch.cat(img_slice).to(device)
+        # if augmentation:
+            # img_totest = torch.cat([center_da(x, 0).cuda(non_blocking=True) for x in img_slice], dim=0).to(device)
+        img_totest = torch.cat(img_slice).to(device)
 
         with torch.no_grad():
             ft_new = marking_network(img_totest)

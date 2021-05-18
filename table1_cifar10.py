@@ -90,7 +90,7 @@ def do_marking_run(class_marking_percentage, experiment_directory, tensorboard_l
     with open(os.path.join(experiment_directory, "marking.complete"),"w") as fh:
         fh.write("1")
 
-def do_marking_run_multiclass(overall_marking_percentage, experiment_directory, tensorboard_log_directory, augment=True):
+def do_marking_run_multiclass(overall_marking_percentage, experiment_directory, tensorboard_log_directory, augment=False):
     # Setup experiment directory
     if os.path.isdir(experiment_directory):
         error_message = f"Directory {experiment_directory} already exists. By default we assume you don't want to "\
@@ -133,13 +133,11 @@ def do_marking_run_multiclass(overall_marking_percentage, experiment_directory, 
             epochs = 100
             batch_size = 32
             output_directory = os.path.join(experiment_directory, "marked_images")
-            if not augment:
-                augmentation = None
 
             tensorboard_class_log = os.path.join(tensorboard_log_directory, f"class_{class_id}")
             marked_images_temp = do_marking(output_directory, marking_network, images, original_indexes, carriers, 
                                             class_id, NORMALIZE_CIFAR10, optimizer, tensorboard_class_log, epochs=epochs, 
-                                            batch_size=batch_size, overwrite=False, augmentation=augmentation)
+                                            batch_size=batch_size, overwrite=False, augmentation=augment)
             
             marked_images =  marked_images + marked_images_temp   
 
@@ -263,11 +261,11 @@ if __name__ == '__main__':
         tensorboard_log_directory = os.path.join("runs", "table1", f"{marking_percentage}_percent", "marking")
         shutil.rmtree(experiment_directory, ignore_errors=True)
         shutil.rmtree(tensorboard_log_directory, ignore_errors=True)
-        do_marking_run_multiclass(marking_percentage, experiment_directory, tensorboard_log_directory, augment=False)
+        do_marking_run_multiclass(marking_percentage, experiment_directory, tensorboard_log_directory, augment=True)
 
     # Step 3 - Training Target Networks
     for marking_percentage in marking_percentages:
-        do_training_run(f"{marking_percentage}_percent", augment=False)
+        do_training_run(f"{marking_percentage}_percent", augment=True)
 
     # Step 4 - Calculate p-values
     p_values = calculate_p_values(marking_percentages)  
