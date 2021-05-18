@@ -11,8 +11,11 @@ import numpy as np
 from tqdm.autonotebook import tqdm
 
 from radioactive.dataset_wrappers import MergedDataset
-from utils.utils import NORMALIZE_CIFAR10, NORMALIZE_IMAGENET, NORMALIZE_IMAGENETTE
+from utils.utils import NORMALIZE_CIFAR10
 from utils.utils import Timer
+
+from accelerate import Accelerator
+accelerator = Accelerator()
 
 import logging
 from utils.logger import setup_logger_tqdm
@@ -77,45 +80,45 @@ def get_data_loaders_cifar(marked_images_directory, augment, batch_size=512, num
     return train_set_loader, test_set_loader
 
 
-def train_model(device, model, train_set_loader, optimizer):
+def train_model(model, train_set_loader, optimizer):
     model.train() # For special layers
     total = 0
     correct = 0
     total_loss = 0
     for images, targets in tqdm(train_set_loader, desc="Training"):
-        total += images.shape[0]
         optimizer.zero_grad()
-        images = images.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
+
         output = model(images)
         loss = F.cross_entropy(output, targets, reduction='mean')
         total_loss += torch.sum(loss)
-        loss.backward()
+        accelerator.backward(loss)
         optimizer.step()
         # logger.info(f"Batch Loss: {loss}")
 
         _, predicted = torch.max(output.data, 1)
-        correct += predicted.eq(targets.data).cpu().sum()
+        # correct += predicted.eq(targets.data).cpu().sum()
+        accurate_preds = accelerator.gather(predicted) == accelerator.gather(targets)
+        total += accurate_preds.shape[0]
+        correct += accurate_preds.long().sum()
 
     average_train_loss = total_loss / total
     accuracy = 100. * correct.item() / total
 
     return average_train_loss, accuracy
 
-def test_model(device, model, test_set_loader, optimizer):
+@torch.no_grad()
+def test_model(model, test_set_loader):
     model.eval() # For special layers
     total = 0
     correct = 0
-    with torch.no_grad():
-        for images, targets in tqdm(test_set_loader, desc="Testing"):
-            total += images.shape[0]
+    for images, targets in tqdm(test_set_loader, desc="Testing"):
+        outputs = model(images)
 
-            images = images.to(device, non_blocking=True)
-            targets = targets.to(device, non_blocking=True)
-            outputs = model(images)
-
-            _, predicted = torch.max(outputs.data, 1)
-            correct += predicted.eq(targets.data).cpu().sum()
+        _, predicted = torch.max(outputs.data, 1)
+        # correct += predicted.eq(targets.data).cpu().sum()
+        accurate_preds = accelerator.gather(predicted) == accelerator.gather(targets)
+        total += accurate_preds.shape[0]
+        correct += accurate_preds.long().sum()
 
     accuracy = 100. * correct.item() / total
     return accuracy
@@ -135,20 +138,21 @@ def main(dataloader_func, model, optimizer_callback, output_directory, tensorboa
     tensorboard_summary_writer = SummaryWriter(log_dir=tensorboard_log_directory)
 
     # Choose Training Device
-    use_cuda = torch.cuda.is_available()
-    logger.info(f"CUDA Available? {use_cuda}")
-    device = "cuda" if use_cuda else "cpu"   
+    # use_cuda = torch.cuda.is_available()
+    # logger.info(f"CUDA Available? {use_cuda}")
+    # device = "cuda" if use_cuda else "cpu"   
 
     # Dataloaders
     train_set_loader, test_set_loader = dataloader_func()
 
     # Model & Optimizer
-    model.to(device)
+    # model.to(device)
     optimizer = optimizer_callback(model)
     if lr_scheduler:
         lr_scheduler = lr_scheduler(optimizer)
 
-    logger.info(f"Epoch Count: {epochs}")
+    if accelerator.is_local_main_process:
+        logger.info(f"Epoch Count: {epochs}")
 
     # Load Checkpoint
     checkpoint_file_path = os.path.join(output_directory, "checkpoint.pth")
@@ -171,20 +175,26 @@ def main(dataloader_func, model, optimizer_callback, output_directory, tensorboa
     else:
         logger.info("No checkpoint found, starting from scratch.")
 
+    # Use accelerator
+    model, optimizer, train_set_loader, test_set_loader = accelerator.prepare(
+        model, optimizer, train_set_loader, test_set_loader
+    )
+
     # Training Loop
     t = Timer()
     best_test = 0
     for epoch in range(start_epoch, epochs):
         t.start()
-        logger.info(f"Commence EPOCH {epoch}")
+        if accelerator.is_local_main_process:
+            logger.info(f"Commence EPOCH {epoch}")
 
         # Train
-        train_loss, train_accuracy = train_model(device, model, train_set_loader, optimizer)
+        train_loss, train_accuracy = train_model(model, train_set_loader, optimizer)
         tensorboard_summary_writer.add_scalar("train_loss", train_loss, epoch)
         tensorboard_summary_writer.add_scalar("train_accuracy", train_accuracy, epoch)
         
         # Test
-        test_accuracy = test_model(device, model, test_set_loader, optimizer)
+        test_accuracy = test_model(model, test_set_loader)
         tensorboard_summary_writer.add_scalar("test_accuracy", test_accuracy, epoch)
 
         scheduler_dict = None
@@ -197,11 +207,15 @@ def main(dataloader_func, model, optimizer_callback, output_directory, tensorboa
         if is_best:
             best_test = test_accuracy
         if is_best or epochs < 15:
-            logger.info("Saving checkpoint.")
+            accelerator.wait_for_everyone()
+            if accelerator.is_local_main_process:
+                logger.info("Saving checkpoint.")
+            unwrapped_model = accelerator.unwrap_model(model)
+            unwrapped_optimizer = accelerator.unwrap_model(optimizer)
             torch.save({
                 'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
+                'model_state_dict': unwrapped_model.state_dict(),
+                'optimizer_state_dict': unwrapped_optimizer.state_dict(),
                 'lr_scheduler_state_dict': scheduler_dict,
                 'train_loss': train_loss,
                 'train_accuracy': train_accuracy,
@@ -209,11 +223,13 @@ def main(dataloader_func, model, optimizer_callback, output_directory, tensorboa
                 }, checkpoint_file_path)
 
         elapsed_time = t.stop()
-        logger.info(f"End of epoch {epoch}, took {elapsed_time:0.4f} seconds.")
-        logger.info(f"Average Train Loss: {train_loss}")
-        logger.info(f"Top-1 Train Accuracy: {train_accuracy}")
-        logger.info(f"Top-1 Test Accuracy: {test_accuracy}")
-    logger.info(f"Top-1 Best Test Accuracy: {best_test}")
+        if accelerator.is_local_main_process:
+            logger.info(f"End of epoch {epoch}, took {elapsed_time:0.4f} seconds.")
+            logger.info(f"Average Train Loss: {train_loss}")
+            logger.info(f"Top-1 Train Accuracy: {train_accuracy}")
+            logger.info(f"Top-1 Test Accuracy: {test_accuracy}")
+    if accelerator.is_local_main_process:
+        logger.info(f"Top-1 Best Test Accuracy: {best_test}")
 
 from functools import partial
 

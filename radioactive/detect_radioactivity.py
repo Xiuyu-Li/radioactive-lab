@@ -147,7 +147,7 @@ def main(carrier_path, marking_network, target_network, target_checkpoint, batch
         features_target = features_target.numpy()
 
         X, residuals, rank, s = np.linalg.lstsq(features_marking, features_target)
-        logger.info("Norm of residual: %.4e" % np.linalg.norm(np.dot(features_marking, X) - features_target)**2)
+        logger.info("Norm of residual: %.4e" % np.linalg.norm(features_marking @ X - features_target))
         W = np.matmul(W, X.T)
 
     # Computing scores
