@@ -102,7 +102,7 @@ def get_data_loader(batch_size, num_workers):
 
     dataset_directory = "experiments/datasets"
     test_transform = transforms.Compose([transforms.ToTensor(), NORMALIZE_CIFAR10])
-    test_set = torchvision.datasets.CIFAR10(dataset_directory, train=False, transform=test_transform)
+    test_set = torchvision.datasets.CIFAR100(dataset_directory, train=False, transform=test_transform)
     test_set_loader = torch.utils.data.DataLoader(test_set, 
                                                   batch_size=batch_size, 
                                                   num_workers=num_workers, 

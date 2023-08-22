@@ -216,7 +216,7 @@ def main(dataloader_func, model, optimizer_callback, output_directory, tensorboa
                 'epoch': epoch,
                 'model_state_dict': unwrapped_model.state_dict(),
                 'optimizer_state_dict': unwrapped_optimizer.state_dict(),
-                'lr_scheduler_state_dict': scheduler_dict,
+                # 'lr_scheduler_state_dict': scheduler_dict,
                 'train_loss': train_loss,
                 'train_accuracy': train_accuracy,
                 'test_accuracy': test_accuracy

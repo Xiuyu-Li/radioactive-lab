@@ -14,7 +14,8 @@ import matplotlib.pyplot as plt
 
 
 import resnet18.resnet18_cifar10 as resnet18cifar10
-from models.resnet2 import resnet 
+# from models.resnet2 import resnet 
+from models.resnet import resnet18, resnet50 
 from radioactive.make_data_radioactive import get_images_for_marking_cifar10, get_images_for_marking_multiclass_cifar10
 from radioactive.make_data_radioactive import main as do_marking
 from radioactive.train_marked_classifier import main as train_marked_classifier
@@ -25,6 +26,7 @@ from utils.utils import NORMALIZE_CIFAR10
 import logging
 from utils.logger import setup_logger_tqdm
 logger = logging.getLogger(__name__)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 """
 1. Train a resnet18 classifier on cifar10
@@ -56,9 +58,10 @@ def do_marking_run(overall_marking_percentage, experiment_directory, tensorboard
 
     # Marking network is the resnet18 we trained on CIFAR10
     # marking_network = torchvision.models.resnet18(pretrained=False, num_classes=10)
-    marking_network = resnet(num_classes=100, depth=164, block_name='bottleneck')
-    checkpoint_path = "experiments/cifar100/table2/step1/checkpoint.pth"
-    marking_network_checkpoint = torch.load(checkpoint_path)
+    # marking_network = resnet(num_classes=100, depth=164, block_name='bottleneck')
+    marking_network = resnet18(num_classes=100)
+    checkpoint_path = "experiments/resnet18.pth"
+    marking_network_checkpoint = torch.load(checkpoint_path, map_location=device)
     marking_network.load_state_dict({k.replace("module.", ""): v for k, v in 
         marking_network_checkpoint["model_state_dict"].items()})
 
@@ -115,9 +118,10 @@ def do_marking_run_multiclass(overall_marking_percentage, experiment_directory, 
 
     # Marking network is the resnet18 we trained on CIFAR10
     # marking_network = torchvision.models.resnet18(pretrained=False, num_classes=10) 
-    marking_network = resnet(num_classes=100, depth=164, block_name='bottleneck')   
-    checkpoint_path = "experiments/cifar100/table2/step1/checkpoint.pth"
-    marking_network_checkpoint = torch.load(checkpoint_path)
+    # marking_network = resnet(num_classes=100, depth=164, block_name='bottleneck')   
+    marking_network = resnet18(num_classes=100)
+    checkpoint_path = "experiments/resnet18.pth"
+    marking_network_checkpoint = torch.load(checkpoint_path, map_location=device)
     marking_network.load_state_dict({k.replace("module.", ""): v for k, v in 
         marking_network_checkpoint["model_state_dict"].items()})
 
@@ -166,10 +170,11 @@ def do_training_run(run_name, augment):
     tensorboard_log_directory = f"runs/table2_{run_name}_target"
     epochs = 200
     output_directory = f"experiments/cifar100/table2/{run_name}/marked_classifier"
-    marked_images_directory = f"experiments/cifar100/table1/{run_name}/marked_images"
+    marked_images_directory = f"experiments/cifar100/table2/{run_name}/marked_images"
     dataloader_func = partial(get_data_loaders_cifar, marked_images_directory, augment, batch_size=256, dataset='cifar100')
     # model = torchvision.models.resnet18(pretrained=False, num_classes=10)
-    model = resnet(num_classes=100, depth=164, block_name='bottleneck')
+    # model = resnet(num_classes=100, depth=164, block_name='bottleneck')
+    model = resnet18(num_classes=100)
     train_marked_classifier(dataloader_func, model, optimizer, output_directory, tensorboard_log_directory, 
                             epochs=epochs)
 
@@ -182,21 +187,23 @@ def calculate_p_values(marking_percentages):
 
     # Load Marking Network and remove fully connected layer
     # marking_network = torchvision.models.resnet18(pretrained=False, num_classes=10)
-    marking_network = resnet(num_classes=100, depth=164, block_name='bottleneck')
-    marking_checkpoint_path = "experiments/cifar100/table1/step1/checkpoint.pth"
-    marking_checkpoint = torch.load(marking_checkpoint_path)
+    # marking_network = resnet(num_classes=100, depth=164, block_name='bottleneck')
+    marking_network = resnet18(num_classes=100)
+    marking_checkpoint_path = "experiments/resnet18.pth"
+    marking_checkpoint = torch.load(marking_checkpoint_path, map_location=device)
     marking_network.load_state_dict({k.replace("module.", ""): v for k, v in 
         marking_checkpoint["model_state_dict"].items()})
     marking_network.fc = nn.Sequential()
 
     for run in marking_percentages:
         run_name = f"{run}_percent"
-        carrier_path = f"experiments/cifar100/table1/{run_name}/carriers.pth"
+        carrier_path = f"experiments/cifar100/table2/{run_name}/carriers.pth"
 
         # target_network = torchvision.models.resnet18(pretrained=False, num_classes=10)
-        target_network = resnet(num_classes=100, depth=164, block_name='bottleneck')
+        # target_network = resnet(num_classes=100, depth=164, block_name='bottleneck')
+        target_network = resnet18(num_classes=100)
         target_checkpoint_path = f"experiments/cifar100/table2/{run_name}/marked_classifier/checkpoint.pth"
-        target_checkpoint = torch.load(target_checkpoint_path)
+        target_checkpoint = torch.load(target_checkpoint_path, map_location=device)
         target_network.load_state_dict({k.replace("module.", ""): v for k, v in 
             target_checkpoint["model_state_dict"].items()})
         target_network.fc = nn.Sequential()
@@ -209,15 +216,15 @@ def calculate_p_values(marking_percentages):
 
 def generate_table_2(marking_percentages, p_values):
     # Get Vanilla Accuracy
-    vanilla_checkpoint_path = "experiments/cifar100/table1/step1/checkpoint.pth"
-    vanilla_checkpoint = torch.load(vanilla_checkpoint_path)
+    vanilla_checkpoint_path = "experiments/resnet18.pth"
+    vanilla_checkpoint = torch.load(vanilla_checkpoint_path, map_location=device)
 
     # The Rest
     accuracies = [f'{vanilla_checkpoint["test_accuracy"]:0.2f}']
     for run in marking_percentages:
         run_name = f"{run}_percent"
         marked_checkpoint_path = f"experiments/cifar100/table2/{run_name}/marked_classifier/checkpoint.pth"
-        marked_checkpoint = torch.load(marked_checkpoint_path)
+        marked_checkpoint = torch.load(marked_checkpoint_path, map_location=device)
         accuracies.append(f'{marked_checkpoint["test_accuracy"]:0.2f}')
 
     # Create the table!
@@ -244,12 +251,13 @@ def generate_table_2(marking_percentages, p_values):
 if __name__ == '__main__':
     marking_percentages = [2, 5, 10, 20]
     p_values_file = "experiments/cifar100/table2/p_values.pth"
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
     # Step 1 - Train Marking Network
-    optimizer = lambda x : torch.optim.AdamW(x)
-    output_directory_root = "experiments/cifar100/table1" # Reuse if available
-    experiment_name = "step1"
-    epochs = 200
+    # optimizer = lambda x : torch.optim.AdamW(x)
+    # output_directory_root = "experiments/cifar100/table1" # Reuse if available
+    # experiment_name = "step1"
+    # epochs = 200
     # resnet18cifar10.main(experiment_name, optimizer, 
     #                      output_directory_root=output_directory_root,
     #                      epochs=epochs)
@@ -257,29 +265,32 @@ if __name__ == '__main__':
     # Step 2 - Marking
     # Reuse from Table 1 if available.
     for marking_percentage in marking_percentages:
-        experiment_directory = os.path.join("experiments/cifar100/table1", f"{marking_percentage}_percent")
+        experiment_directory = os.path.join("experiments/cifar100/table2", f"{marking_percentage}_percent")
         if os.path.exists(os.path.join(experiment_directory, "marking.complete")):
+            if local_rank == 0:
+                print(f"Marking step already completed for {marking_percentage}%. Skipping.")
             # message = f"Marking step already completed for {marking_percentage}%. Do you want to restart this part of " \
             #           "the experiment?"
             # if not cutie.prompt_yes_or_no(message, yes_text="Restart", no_text="Skip marking step"):
             #     continue
             continue
-        tensorboard_log_directory = os.path.join("runs", "table1", f"{marking_percentage}_percent", "marking")
+        tensorboard_log_directory = os.path.join("runs", "table2", f"{marking_percentage}_percent", "marking")
         shutil.rmtree(experiment_directory, ignore_errors=True)
         shutil.rmtree(tensorboard_log_directory, ignore_errors=True)
 
         do_marking_run_multiclass(marking_percentage, experiment_directory, tensorboard_log_directory, augment=False)
 
     # Step 3 - Training Target Networks
-    # for marking_percentage in marking_percentages:
+    for marking_percentage in marking_percentages:
         # do_training_run(f"{marking_percentage}_percent", augment=False)
-        # do_training_run(f"{marking_percentage}_percent", augment=True)
+        do_training_run(f"{marking_percentage}_percent", augment=True)
 
-    # Step 4 - Calculate p-values
-    p_values = calculate_p_values(marking_percentages)  
-    torch.save(p_values, p_values_file)
-    p_values = torch.load(p_values_file)
+    if local_rank == 0:
+        # Step 4 - Calculate p-values
+        p_values = calculate_p_values(marking_percentages)  
+        torch.save(p_values, p_values_file)
+        p_values = torch.load(p_values_file)
 
-    # Step 5 - Generate Table 2
-    generate_table_2(marking_percentages, p_values)
+        # Step 5 - Generate Table 2
+        generate_table_2(marking_percentages, p_values)
 
