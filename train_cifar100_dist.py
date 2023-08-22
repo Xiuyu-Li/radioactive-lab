@@ -148,7 +148,7 @@ def main(args):
                 'epoch': epoch,
                 'model_state_dict': unwrapped_model.state_dict(),
                 'optimizer_state_dict': unwrapped_optimizer.state_dict(),
-                'lr_scheduler_state_dict': unwrapped_scheduler.state_dict(),
+                # 'lr_scheduler_state_dict': unwrapped_scheduler.state_dict(),
                 'train_loss': train_loss,
                 'train_accuracy': train_acc,
                 'test_accuracy': test_acc,
