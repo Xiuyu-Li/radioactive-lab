@@ -20,35 +20,40 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from models.resnet import resnet18, resnet50 
 # from utils.utils import train, test, accuracy, AverageMeter
-from utils.utils import Timer
+from utils.utils import Timer, WarmUpLR
 from accelerate import Accelerator
 import wandb
 
-CIFAR100_TRAIN_MEAN = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
-CIFAR100_TRAIN_STD = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
+CIFAR100_TRAIN_MEAN = (0.5071, 0.4865, 0.4409)
+CIFAR100_TRAIN_STD = (0.2673, 0.2564, 0.2762)
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 accelerator = Accelerator(log_with="wandb")
 
 
-def train_model(model, train_set_loader, optimizer, scheduler):
+def train_model(epoch, model, train_loader, optimizer, scheduler, warmup_scheduler):
     model.train() # For special layers
     total = 0
     correct = 0
     total_loss = 0
-    for images, targets in tqdm(train_set_loader, desc="Training"):
+    for images, targets in tqdm(train_loader, desc="Training"):
         optimizer.zero_grad()
+
+        if epoch > args.warm:
+            scheduler.step()
 
         outputs = model(images)
         loss = F.cross_entropy(outputs, targets, reduction='mean')
         total_loss += torch.sum(loss)
         accelerator.backward(loss)
         optimizer.step()
-        scheduler.step()
 
         _, predicted = torch.max(outputs.data, 1)
         accurate_preds = accelerator.gather(predicted) == accelerator.gather(targets)
         total += accurate_preds.shape[0]
         correct += accurate_preds.long().sum()
+
+        if epoch <= args.warm:
+            warmup_scheduler.step()
 
     average_train_loss = total_loss / total
     accuracy = 100. * correct.item() / total
@@ -113,25 +118,29 @@ def main(args):
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
     iter_per_epoch = len(trainloader)
 
-    lr_schedule = np.interp(np.arange((args.epochs+1) * iter_per_epoch),
-                    [0, 5 * iter_per_epoch, args.epochs * iter_per_epoch], [0, 1, 0])
-    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_schedule.__getitem__)
+    # lr_schedule = np.interp(np.arange((args.epochs+1) * iter_per_epoch),
+    #                 [0, 5 * iter_per_epoch, args.epochs * iter_per_epoch], [0, 1, 0])
+    # scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_schedule.__getitem__)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60, 120, 160], gamma=0.2)
+    
+    warmup_scheduler = WarmUpLR(optimizer, iter_per_epoch * args.warm)
 
     # use accelerate to automatically handle device placement
     accelerator.print("Preparing model, optimizer, and scheduler.")
-    model, optimizer, trainloader, testloader, scheduler = accelerator.prepare(
-        model, optimizer, trainloader, testloader, scheduler
+    model, optimizer, trainloader, testloader, scheduler, warmup_scheduler = accelerator.prepare(
+        model, optimizer, trainloader, testloader, scheduler, warmup_scheduler
     )
     accelerator.print("Initialization complete.")
 
-    checkpoint_path = f"{args.model}.pth"
+    checkpoint_path = f"{args.model}_test_dist.pth"
     best_acc = 0
     t = Timer()
-    for epoch in range(args.epochs):
+    for epoch in range(1, args.epochs + 1):
         t.start()
         # train_loss, train_acc = train(trainloader, model, criterion, optimizer, scheduler, device)
         # test_loss, test_acc = test(testloader, model, criterion, device)
-        train_loss, train_acc = train_model(model, trainloader, optimizer, scheduler)
+        train_loss, train_acc = train_model(
+            epoch, model, trainloader, optimizer, scheduler, warmup_scheduler)
         test_loss, test_acc = test_model(model, testloader)
         
         # Save the best model
@@ -175,6 +184,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.1, help='initial learning rate')
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--model', type=str, default='resnet18')
+    parser.add_argument('--warm', type=int, default=1, help='warm up training phase')
     args = parser.parse_args()
 
     main(args)

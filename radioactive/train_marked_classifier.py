@@ -11,7 +11,7 @@ import numpy as np
 from tqdm.autonotebook import tqdm
 
 from radioactive.dataset_wrappers import MergedDataset
-from utils.utils import NORMALIZE_CIFAR10
+from utils.utils import NORMALIZE_CIFAR100
 from utils.utils import Timer
 
 from accelerate import Accelerator
@@ -54,7 +54,7 @@ def get_data_loaders_cifar(marked_images_directory, augment, batch_size=512, num
         transforms_list += [transforms.RandomCrop(32, padding=4),
                             transforms.RandomHorizontalFlip()]
     
-    transforms_list += [transforms.ToTensor(), NORMALIZE_CIFAR10]
+    transforms_list += [transforms.ToTensor(), NORMALIZE_CIFAR100]
     
     train_transform = transforms.Compose(transforms_list)
     merged_train_set.transform = train_transform
@@ -66,7 +66,7 @@ def get_data_loaders_cifar(marked_images_directory, augment, batch_size=512, num
                                                    pin_memory=True)
 
     # Test Set (Simple)
-    test_transform = transforms.Compose([transforms.ToTensor(), NORMALIZE_CIFAR10])
+    test_transform = transforms.Compose([transforms.ToTensor(), NORMALIZE_CIFAR100])
     if dataset == 'cifar10':
         test_set = torchvision.datasets.CIFAR10(cifar_dataset_root, train=False, transform=test_transform)
     elif dataset == 'cifar100':
